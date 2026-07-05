@@ -66,6 +66,12 @@
   .pulse{display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--red);
     margin-right:6px; animation:pu 1.2s infinite;}
   @keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
+  /* clearable fields */
+  .clearwrap{position:relative;}
+  .clearwrap input,.clearwrap select{padding-right:40px;}
+  .clearx{position:absolute; right:7px; top:50%; transform:translateY(-50%); border:none;
+    background:#dfe2da; color:#555; width:26px; height:26px; border-radius:50%; font-size:13px;
+    line-height:1; cursor:pointer; padding:0;}
   /* modal */
   #modal{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:20;
     align-items:flex-end; justify-content:center;}
@@ -104,6 +110,7 @@
     <input type="text" id="rVendor" placeholder="e.g., Office Depot">
     <label>Description / ministry purpose</label>
     <textarea id="rDesc" placeholder="What was it for?"></textarea>
+    <div id="rLocFields"></div>
     <button class="btn" id="rSave">Save Receipt</button>
   </div>
   <div class="card">
@@ -121,6 +128,7 @@
     <input type="text" id="tName" placeholder="e.g., Hospital visit – Springfield">
     <label>Description</label>
     <input type="text" id="tDesc" placeholder="Purpose of trip">
+    <div id="tLocFields"></div>
     <label>Start odometer</label>
     <input type="number" id="tOdo" inputmode="decimal" step="0.1" min="0" placeholder="e.g., 48213">
     <button class="btn" id="tStart">▶ Start Trip</button>
@@ -182,6 +190,7 @@
 
 <div id="modal"><div id="modalBox"></div></div>
 
+<script src="geo.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -237,6 +246,104 @@ document.querySelectorAll("nav button").forEach(b=>{
   };
 });
 
+/* ---------- Location fields (Country / State / City) ---------- */
+function makeLocFields(containerId){
+  const c = $(containerId);
+  c.innerHTML =
+    `<label>Country</label>
+     <div class="clearwrap"><select class="lf-country"></select><button type="button" class="clearx lf-cx">✕</button></div>
+     <label>State / Province</label>
+     <div class="clearwrap lf-statewrap"><button type="button" class="clearx lf-sx">✕</button></div>
+     <label>City</label>
+     <div class="clearwrap"><input type="text" class="lf-city" placeholder="City"><button type="button" class="clearx lf-yx">✕</button></div>
+     <button type="button" class="btn gray small lf-gps">📍 Fill from my location</button>`;
+  const country = c.querySelector(".lf-country");
+  const stateWrap = c.querySelector(".lf-statewrap");
+  const cityEl = c.querySelector(".lf-city");
+  const opt = (v,t,code) => { const o=document.createElement("option"); o.value=v; o.textContent=t; if(code) o.dataset.code=code; return o; };
+  country.appendChild(opt("","— select country —"));
+  GEO.c.forEach(([name,code]) => country.appendChild(opt(code,name)));
+  const stateEl = () => stateWrap.querySelector("select,input");
+  function buildState(code){
+    stateEl()?.remove();
+    const list = code && GEO.s[code];
+    let el;
+    if(list){
+      el = document.createElement("select");
+      el.appendChild(opt("","— select —"));
+      list.forEach(([n,sc]) => el.appendChild(opt(n,n,sc)));
+    } else {
+      el = document.createElement("input"); el.type="text"; el.placeholder="State / Province";
+    }
+    el.className = "lf-state";
+    stateWrap.insertBefore(el, stateWrap.querySelector(".lf-sx"));
+  }
+  buildState("");
+  country.onchange = () => buildState(country.value);
+  c.querySelector(".lf-cx").onclick = () => { country.value=""; buildState(""); };
+  c.querySelector(".lf-sx").onclick = () => { const s=stateEl(); if(s) s.value=""; };
+  c.querySelector(".lf-yx").onclick = () => { cityEl.value=""; };
+  const api = {
+    get(){
+      const cn = country.value ? country.selectedOptions[0].textContent : "";
+      return { country:cn, state:(stateEl()?.value||"").trim(), city:cityEl.value.trim() };
+    },
+    set({countryCode, countryName, stateCode, stateName, city}={}){
+      let code = countryCode;
+      if(!code && countryName){
+        const m = GEO.c.find(x => x[0].toLowerCase()===countryName.toLowerCase());
+        if(m) code = m[1];
+      }
+      if(code && GEO.c.some(x => x[1]===code)){ country.value = code; buildState(code); }
+      const st = stateEl();
+      if(st && (stateCode || stateName)){
+        if(st.tagName==="SELECT"){
+          let o = stateCode && [...st.options].find(o => o.dataset.code===stateCode);
+          if(!o && stateName) o = [...st.options].find(o => o.value.toLowerCase()===String(stateName).toLowerCase());
+          if(o) st.value = o.value;
+        } else if(stateName) st.value = stateName;
+      }
+      if(city) cityEl.value = city;
+    },
+    gpsBtn: c.querySelector(".lf-gps")
+  };
+  api.gpsBtn.onclick = () => gpsFill(api);
+  return api;
+}
+
+async function gpsFill(lf){
+  if(!navigator.geolocation){ toast("GPS not available."); return; }
+  lf.gpsBtn.disabled = true; lf.gpsBtn.textContent = "📍 Locating…";
+  try{
+    const pos = await new Promise((res,rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, {enableHighAccuracy:true, timeout:15000, maximumAge:60000}));
+    const {latitude, longitude} = pos.coords;
+    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`);
+    if(!r.ok) throw new Error("lookup failed");
+    const j = await r.json();
+    lf.set({
+      countryCode: j.countryCode,
+      stateName: j.principalSubdivision,
+      stateCode: (j.principalSubdivisionCode||"").split("-").pop(),
+      city: j.city || j.locality || ""
+    });
+  }catch(e){
+    toast(e.code===1 ? "Location permission denied — enter manually." : "Couldn't detect location — enter manually.");
+  }
+  lf.gpsBtn.disabled = false; lf.gpsBtn.textContent = "📍 Fill from my location";
+}
+
+const rLoc = makeLocFields("rLocFields");
+const tLoc = makeLocFields("tLocFields");
+
+function saveLastLoc(loc){ localStorage.setItem("lastLoc", JSON.stringify(loc)); }
+function prefillLastLoc(){
+  try{
+    const l = JSON.parse(localStorage.getItem("lastLoc")||"null");
+    if(l){ const v={countryName:l.country, stateName:l.state, city:l.city}; rLoc.set(v); tLoc.set(v); }
+  }catch(e){}
+}
+
 /* ---------- Receipts ---------- */
 $("rDate").value = today();
 
@@ -266,11 +373,14 @@ $("rSave").onclick = async () => {
     let img = null;
     const f = $("rPhoto").files[0];
     if(f) img = await compressImage(f).catch(()=>f);
+    const loc = rLoc.get();
     await dbPut("receipts",{
       date:$("rDate").value, amount, category:$("rCategory").value,
       vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
+      country:loc.country, state:loc.state, city:loc.city,
       img, created:Date.now()
     });
+    saveLastLoc(loc);
     $("rPhoto").value=""; $("rAmount").value=""; $("rVendor").value=""; $("rDesc").value="";
     $("rDate").value=today();
     toast("Receipt saved ✓");
@@ -292,7 +402,7 @@ async function renderReceipts(){
     let thumb='<div class="thumb">🧾</div>';
     if(r.img){ const u=URL.createObjectURL(r.img); objUrls.push(u); thumb=`<img class="thumb" src="${u}">`; }
     div.innerHTML = thumb+`<div class="info"><div class="t1">${esc(r.vendor)||esc(r.category)}</div>
-      <div class="t2">${r.date} · ${esc(r.category)}${r.desc?" · "+esc(r.desc):""}</div></div>
+      <div class="t2">${r.date} · ${esc(r.category)}${r.city?" · "+esc(r.city):""}${r.desc?" · "+esc(r.desc):""}</div></div>
       <div class="amt">${fmt$(r.amount)}</div>`;
     div.onclick=()=>showReceipt(r);
     list.appendChild(div);
@@ -308,6 +418,7 @@ function showReceipt(r){
      <div class="kv"><span>Amount</span><span>${fmt$(r.amount)}</span></div>
      <div class="kv"><span>Category</span><span>${esc(r.category)}</span></div>
      <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
+     <div class="kv"><span>Location</span><span style="text-align:right">${esc([r.city,r.state,r.country].filter(Boolean).join(", "))||"—"}</span></div>
      <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>`+
     (r.img?'<button class="btn" id="mShare">Share Photo</button>':"")+
     '<button class="btn red small" id="mDel">Delete Receipt</button>'+
@@ -353,8 +464,11 @@ $("tStart").onclick = () => {
   if(!name){ toast("Please name the trip."); return; }
   if(isNaN(odo)){ toast("Please enter the start odometer."); return; }
   if(!navigator.geolocation){ toast("GPS not available on this device."); return; }
+  const loc = tLoc.get();
   trip = { name, desc:$("tDesc").value.trim(), startOdo:odo, meters:0,
+           country:loc.country, state:loc.state, city:loc.city,
            last:null, start:Date.now(), date:today() };
+  saveLastLoc(loc);
   saveTripState();
   startWatch();
   showTripUI("live");
@@ -416,6 +530,7 @@ $("fSave").onclick = async () => {
   const miles=parseFloat($("fMiles").value), endOdo=parseFloat($("fEndOdo").value);
   if(isNaN(miles)||miles<0){ toast("Check the miles value."); return; }
   await dbPut("trips",{ date:trip.date, name:trip.name, desc:trip.desc,
+    country:trip.country||"", state:trip.state||"", city:trip.city||"",
     startOdo:trip.startOdo, endOdo, miles, created:Date.now() });
   localStorage.setItem("lastOdo", String(endOdo));
   endTrip("Trip saved ✓");
@@ -446,7 +561,7 @@ async function renderTrips(){
   for(const t of all){
     const div=document.createElement("div"); div.className="item";
     div.innerHTML=`<div class="thumb">🚗</div><div class="info"><div class="t1">${esc(t.name)}</div>
-      <div class="t2">${t.date} · ${t.startOdo}→${t.endOdo}${t.desc?" · "+esc(t.desc):""}</div></div>
+      <div class="t2">${t.date} · ${t.startOdo}→${t.endOdo}${t.city?" · "+esc(t.city):""}${t.desc?" · "+esc(t.desc):""}</div></div>
       <div class="amt">${t.miles.toFixed(1)} mi</div>`;
     div.onclick=()=>{
       if(confirm(`Delete trip "${t.name}" (${t.miles.toFixed(1)} mi)?`))
@@ -509,12 +624,12 @@ $("eMileage").onclick = async () => {
   if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
   const trips=(await dbAll("trips")).filter(t=>inRange(t.date)).sort((a,b)=>a.date.localeCompare(b.date));
   if(!trips.length){ toast("No trips in that date range."); return; }
-  const rows=[["Date","Trip Name","Description","Start Odometer","End Odometer","Total Miles"]];
-  trips.forEach(t=>rows.push([t.date,t.name,t.desc,t.startOdo,t.endOdo,t.miles]));
+  const rows=[["Date","Trip Name","Description","City","State/Province","Country","Start Odometer","End Odometer","Total Miles"]];
+  trips.forEach(t=>rows.push([t.date,t.name,t.desc,t.city||"",t.state||"",t.country||"",t.startOdo,t.endOdo,t.miles]));
   rows.push([]);
-  rows.push(["","","","","TOTAL", trips.reduce((s,t)=>s+t.miles,0)]);
+  rows.push(["","","","","","","","TOTAL", trips.reduce((s,t)=>s+t.miles,0)]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"]=[{wch:11},{wch:28},{wch:32},{wch:14},{wch:14},{wch:11}];
+  ws["!cols"]=[{wch:11},{wch:26},{wch:30},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:11}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Mileage Log");
   shareFiles([wbToFile(wb,"mileage_log"+rangeTag()+".xlsx")],"mileage");
@@ -524,12 +639,12 @@ $("eReceipts").onclick = async () => {
   if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
   const rec=(await dbAll("receipts")).filter(r=>inRange(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
   if(!rec.length){ toast("No receipts in that date range."); return; }
-  const rows=[["Date","Vendor","Category","Description / Purpose","Amount","Photo Filename"]];
-  rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.desc,r.amount,r.img?receiptFile(r).name:""]));
+  const rows=[["Date","Vendor","Category","Description / Purpose","City","State/Province","Country","Amount","Photo Filename"]];
+  rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.desc,r.city||"",r.state||"",r.country||"",r.amount,r.img?receiptFile(r).name:""]));
   rows.push([]);
-  rows.push(["","","","TOTAL", rec.reduce((s,r)=>s+r.amount,0),""]);
+  rows.push(["","","","","","","TOTAL", rec.reduce((s,r)=>s+r.amount,0),""]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"]=[{wch:11},{wch:22},{wch:20},{wch:34},{wch:10},{wch:38}];
+  ws["!cols"]=[{wch:11},{wch:22},{wch:20},{wch:30},{wch:16},{wch:16},{wch:16},{wch:10},{wch:38}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Receipts");
   shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
@@ -544,6 +659,7 @@ $("ePhotos").onclick = async () => {
 /* ---------- init ---------- */
 openDB().then(()=>{
   $("tOdo").value = localStorage.getItem("lastOdo")||"";
+  prefillLastLoc();
   renderReceipts();
   renderTrips();
   checkResume();
