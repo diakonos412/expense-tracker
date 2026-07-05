@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Expenses">
+<title>Ministry Expense Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --green:#1e7a46; --green-dark:#155c34; --red:#c0392b;
+    --bg:#f4f5f2; --card:#ffffff; --ink:#22271f; --muted:#6b7263;
+    --line:#e3e5de; --radius:14px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; padding:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; font-size:16px;}
+  body{padding-bottom:calc(78px + env(safe-area-inset-bottom));}
+  header{background:var(--green); color:#fff; padding:calc(14px + env(safe-area-inset-top)) 16px 14px;
+    font-size:19px; font-weight:700; position:sticky; top:0; z-index:5;}
+  header small{display:block; font-weight:400; font-size:12px; opacity:.85;}
+  main{padding:14px; max-width:640px; margin:0 auto;}
+  section{display:none;}
+  section.active{display:block;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px; margin-bottom:12px;}
+  h2{font-size:15px; margin:0 0 10px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;}
+  label{display:block; font-size:13px; color:var(--muted); margin:10px 0 4px;}
+  input,select,textarea{width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--line);
+    border-radius:10px; background:#fbfbfa; color:var(--ink); appearance:none;}
+  textarea{resize:vertical; min-height:54px;}
+  .btn{display:block; width:100%; padding:14px; font-size:17px; font-weight:600; border:none;
+    border-radius:12px; background:var(--green); color:#fff; margin-top:14px; cursor:pointer;}
+  .btn:active{background:var(--green-dark);}
+  .btn.red{background:var(--red);}
+  .btn.gray{background:#eceee9; color:var(--ink);}
+  .btn.small{padding:10px; font-size:14px; margin-top:8px;}
+  .btn:disabled{opacity:.5;}
+  .row{display:flex; gap:10px;}
+  .row>*{flex:1;}
+  /* bottom nav */
+  nav{position:fixed; bottom:0; left:0; right:0; display:flex; background:#fff;
+    border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); z-index:10;}
+  nav button{flex:1; padding:12px 0 10px; border:none; background:none; font-size:12px;
+    color:var(--muted); cursor:pointer;}
+  nav button .ico{display:block; font-size:22px; margin-bottom:2px;}
+  nav button.active{color:var(--green); font-weight:700;}
+  /* lists */
+  .item{display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--line); cursor:pointer;}
+  .item:last-child{border-bottom:none;}
+  .thumb{width:52px; height:52px; border-radius:10px; object-fit:cover; background:#e8eae4;
+    flex:none; display:flex; align-items:center; justify-content:center; font-size:22px; color:var(--muted);}
+  .item .info{flex:1; min-width:0;}
+  .item .t1{font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .item .t2{font-size:13px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .item .amt{font-weight:700; white-space:nowrap;}
+  .empty{color:var(--muted); text-align:center; padding:18px 0; font-size:14px;}
+  .totalbar{font-size:14px; color:var(--muted); text-align:right; margin:4px 2px 10px;}
+  /* trip live */
+  #live{text-align:center; padding:10px 0;}
+  #liveMiles{font-size:56px; font-weight:800; line-height:1;}
+  #liveMiles small{font-size:18px; font-weight:600; color:var(--muted);}
+  #liveInfo{color:var(--muted); font-size:14px; margin-top:8px;}
+  .pulse{display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--red);
+    margin-right:6px; animation:pu 1.2s infinite;}
+  @keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
+  /* modal */
+  #modal{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:20;
+    align-items:flex-end; justify-content:center;}
+  #modal.open{display:flex;}
+  #modalBox{background:#fff; width:100%; max-width:640px; max-height:88vh; overflow-y:auto;
+    border-radius:18px 18px 0 0; padding:16px 16px calc(16px + env(safe-area-inset-bottom));}
+  #modalBox img{width:100%; border-radius:12px; margin-bottom:10px;}
+  .kv{display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--line); font-size:15px;}
+  .kv span:first-child{color:var(--muted);}
+  .msg{position:fixed; top:calc(70px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+    background:#22271f; color:#fff; padding:10px 18px; border-radius:99px; font-size:14px; z-index:30;
+    max-width:90%; text-align:center;}
+</style>
+</head>
+<body>
+<header>Ministry Expense Tracker<small id="hSub">Receipts &amp; mileage for reimbursement</small></header>
+
+<main>
+<!-- ============ RECEIPTS ============ -->
+<section id="tab-receipts" class="active">
+  <div class="card" id="receiptForm">
+    <h2>Add Receipt</h2>
+    <label>Receipt photo</label>
+    <input type="file" id="rPhoto" accept="image/*">
+    <div class="row">
+      <div><label>Date</label><input type="date" id="rDate"></div>
+      <div><label>Amount ($)</label><input type="number" id="rAmount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div>
+    </div>
+    <label>Category</label>
+    <select id="rCategory">
+      <option>Ministry Supplies</option><option>Travel / Transportation</option>
+      <option>Meals</option><option>Lodging</option><option>Office</option>
+      <option>Postage / Shipping</option><option>Books / Media</option><option>Other</option>
+    </select>
+    <label>Vendor / merchant</label>
+    <input type="text" id="rVendor" placeholder="e.g., Office Depot">
+    <label>Description / ministry purpose</label>
+    <textarea id="rDesc" placeholder="What was it for?"></textarea>
+    <button class="btn" id="rSave">Save Receipt</button>
+  </div>
+  <div class="card">
+    <h2>Saved Receipts</h2>
+    <div class="totalbar" id="rTotal"></div>
+    <div id="rList"><div class="empty">No receipts yet.</div></div>
+  </div>
+</section>
+
+<!-- ============ MILEAGE ============ -->
+<section id="tab-mileage">
+  <div class="card" id="tripSetup">
+    <h2>New Trip</h2>
+    <label>Trip name</label>
+    <input type="text" id="tName" placeholder="e.g., Hospital visit – Springfield">
+    <label>Description</label>
+    <input type="text" id="tDesc" placeholder="Purpose of trip">
+    <label>Start odometer</label>
+    <input type="number" id="tOdo" inputmode="decimal" step="0.1" min="0" placeholder="e.g., 48213">
+    <button class="btn" id="tStart">▶ Start Trip</button>
+    <div class="empty" style="padding-top:10px">GPS tracks your route and calculates the end odometer for you. Keep this app open while driving.</div>
+  </div>
+  <div class="card" id="tripLive" style="display:none">
+    <h2><span class="pulse"></span>Trip in progress</h2>
+    <div id="live">
+      <div id="liveMiles">0.0<small> mi</small></div>
+      <div id="liveInfo">Waiting for GPS…</div>
+    </div>
+    <button class="btn red" id="tStop">■ Stop Trip</button>
+  </div>
+  <div class="card" id="tripFinish" style="display:none">
+    <h2>Finish Trip</h2>
+    <div class="kv"><span>Trip</span><span id="fName"></span></div>
+    <div class="kv"><span>GPS distance</span><span id="fGps"></span></div>
+    <div class="row">
+      <div><label>Total miles</label><input type="number" id="fMiles" inputmode="decimal" step="0.1" min="0"></div>
+      <div><label>End odometer</label><input type="number" id="fEndOdo" inputmode="decimal" step="0.1" min="0"></div>
+    </div>
+    <button class="btn" id="fSave">Save Trip</button>
+    <button class="btn gray small" id="fDiscard">Discard trip</button>
+  </div>
+  <div class="card">
+    <h2>Trip Log</h2>
+    <div class="totalbar" id="tTotal"></div>
+    <div id="tList"><div class="empty">No trips yet.</div></div>
+  </div>
+</section>
+
+<!-- ============ EXPORT ============ -->
+<section id="tab-export">
+  <div class="card">
+    <h2>Date Range (optional)</h2>
+    <div class="row">
+      <div><label>From</label><input type="date" id="eFrom"></div>
+      <div><label>To</label><input type="date" id="eTo"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Mileage</h2>
+    <button class="btn" id="eMileage">Export Mileage Log (Excel)</button>
+  </div>
+  <div class="card">
+    <h2>Receipts</h2>
+    <button class="btn" id="eReceipts">Export Receipt List (Excel)</button>
+    <button class="btn gray" id="ePhotos">Share Receipt Photos…</button>
+    <div class="empty" style="padding-top:10px">Use the share sheet to save exports to iCloud Drive (Files) or email them for reimbursement.</div>
+  </div>
+</section>
+</main>
+
+<nav>
+  <button data-tab="receipts" class="active"><span class="ico">🧾</span>Receipts</button>
+  <button data-tab="mileage"><span class="ico">🚗</span>Mileage</button>
+  <button data-tab="export"><span class="ico">📤</span>Export</button>
+</nav>
+
+<div id="modal"><div id="modalBox"></div></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const fmt$ = n => "$" + Number(n).toFixed(2);
+const today = () => new Date().toISOString().slice(0,10);
+const esc = s => String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function toast(t, ms=2600){
+  document.querySelectorAll(".msg").forEach(e=>e.remove());
+  const d=document.createElement("div"); d.className="msg"; d.textContent=t;
+  document.body.appendChild(d); setTimeout(()=>d.remove(), ms);
+}
+
+/* ---------- IndexedDB ---------- */
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const rq = indexedDB.open("ministry-tracker", 1);
+    rq.onupgradeneeded = e => {
+      const d = e.target.result;
+      d.createObjectStore("receipts",{keyPath:"id",autoIncrement:true});
+      d.createObjectStore("trips",{keyPath:"id",autoIncrement:true});
+    };
+    rq.onsuccess = e => { db=e.target.result; res(); };
+    rq.onerror = () => rej(rq.error);
+  });
+}
+function dbAll(store){
+  return new Promise((res,rej)=>{
+    const rq = db.transaction(store).objectStore(store).getAll();
+    rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error);
+  });
+}
+function dbPut(store,obj){
+  return new Promise((res,rej)=>{
+    const rq = db.transaction(store,"readwrite").objectStore(store).put(obj);
+    rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error);
+  });
+}
+function dbDel(store,id){
+  return new Promise((res,rej)=>{
+    const rq = db.transaction(store,"readwrite").objectStore(store).delete(id);
+    rq.onsuccess=()=>res(); rq.onerror=()=>rej(rq.error);
+  });
+}
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll("nav button").forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x===b));
+    document.querySelectorAll("main section").forEach(s=>s.classList.remove("active"));
+    $("tab-"+b.dataset.tab).classList.add("active");
+  };
+});
+
+/* ---------- Receipts ---------- */
+$("rDate").value = today();
+
+function compressImage(file, maxDim=1600, quality=0.8){
+  return new Promise((res,rej)=>{
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width*scale); c.height = Math.round(img.height*scale);
+      c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? res(b) : rej(new Error("compress failed")), "image/jpeg", quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("bad image")); };
+    img.src = url;
+  });
+}
+
+$("rSave").onclick = async () => {
+  const amount = parseFloat($("rAmount").value);
+  if(!$("rDate").value){ toast("Please enter a date."); return; }
+  if(isNaN(amount) || amount<=0){ toast("Please enter the amount."); return; }
+  $("rSave").disabled = true;
+  try{
+    let img = null;
+    const f = $("rPhoto").files[0];
+    if(f) img = await compressImage(f).catch(()=>f);
+    await dbPut("receipts",{
+      date:$("rDate").value, amount, category:$("rCategory").value,
+      vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
+      img, created:Date.now()
+    });
+    $("rPhoto").value=""; $("rAmount").value=""; $("rVendor").value=""; $("rDesc").value="";
+    $("rDate").value=today();
+    toast("Receipt saved ✓");
+    renderReceipts();
+  }catch(err){ toast("Error: "+err.message); }
+  $("rSave").disabled = false;
+};
+
+let objUrls = [];
+async function renderReceipts(){
+  objUrls.forEach(u=>URL.revokeObjectURL(u)); objUrls=[];
+  const all = (await dbAll("receipts")).sort((a,b)=> b.date.localeCompare(a.date) || b.created-a.created);
+  const list = $("rList");
+  $("rTotal").textContent = all.length ? all.length+" receipts · "+fmt$(all.reduce((s,r)=>s+r.amount,0)) : "";
+  if(!all.length){ list.innerHTML='<div class="empty">No receipts yet.</div>'; return; }
+  list.innerHTML="";
+  for(const r of all){
+    const div=document.createElement("div"); div.className="item";
+    let thumb='<div class="thumb">🧾</div>';
+    if(r.img){ const u=URL.createObjectURL(r.img); objUrls.push(u); thumb=`<img class="thumb" src="${u}">`; }
+    div.innerHTML = thumb+`<div class="info"><div class="t1">${esc(r.vendor)||esc(r.category)}</div>
+      <div class="t2">${r.date} · ${esc(r.category)}${r.desc?" · "+esc(r.desc):""}</div></div>
+      <div class="amt">${fmt$(r.amount)}</div>`;
+    div.onclick=()=>showReceipt(r);
+    list.appendChild(div);
+  }
+}
+
+function showReceipt(r){
+  const box=$("modalBox");
+  let imgHtml="";
+  if(r.img){ const u=URL.createObjectURL(r.img); objUrls.push(u); imgHtml=`<img src="${u}">`; }
+  box.innerHTML = imgHtml+
+    `<div class="kv"><span>Date</span><span>${r.date}</span></div>
+     <div class="kv"><span>Amount</span><span>${fmt$(r.amount)}</span></div>
+     <div class="kv"><span>Category</span><span>${esc(r.category)}</span></div>
+     <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
+     <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>`+
+    (r.img?'<button class="btn" id="mShare">Share Photo</button>':"")+
+    '<button class="btn red small" id="mDel">Delete Receipt</button>'+
+    '<button class="btn gray small" id="mClose">Close</button>';
+  $("modal").classList.add("open");
+  $("mClose").onclick=closeModal;
+  $("mDel").onclick=async()=>{
+    if(confirm("Delete this receipt?")){ await dbDel("receipts",r.id); closeModal(); renderReceipts(); }
+  };
+  const sh=$("mShare");
+  if(sh) sh.onclick=()=>shareFiles([receiptFile(r)], "receipt");
+}
+function closeModal(){ $("modal").classList.remove("open"); $("modalBox").innerHTML=""; }
+$("modal").onclick=e=>{ if(e.target.id==="modal") closeModal(); };
+
+function receiptFile(r){
+  const name = `receipt_${r.date}_${(r.vendor||r.category).replace(/[^\w-]+/g,"_")}_${r.amount.toFixed(2)}.jpg`;
+  return new File([r.img], name, {type:"image/jpeg"});
+}
+
+/* ---------- Mileage / GPS ---------- */
+const MI = 1609.344;
+let watchId=null, wakeLock=null, trip=null;
+
+function haversine(a,b){
+  const R=6371000, toR=x=>x*Math.PI/180;
+  const dLat=toR(b.lat-a.lat), dLon=toR(b.lon-a.lon);
+  const h=Math.sin(dLat/2)**2 + Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+
+async function reqWakeLock(){
+  try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch(e){}
+}
+document.addEventListener("visibilitychange",()=>{
+  if(trip && document.visibilityState==="visible") reqWakeLock();
+});
+
+function saveTripState(){ localStorage.setItem("activeTrip", JSON.stringify(trip)); }
+
+$("tStart").onclick = () => {
+  const name=$("tName").value.trim(), odo=parseFloat($("tOdo").value);
+  if(!name){ toast("Please name the trip."); return; }
+  if(isNaN(odo)){ toast("Please enter the start odometer."); return; }
+  if(!navigator.geolocation){ toast("GPS not available on this device."); return; }
+  trip = { name, desc:$("tDesc").value.trim(), startOdo:odo, meters:0,
+           last:null, start:Date.now(), date:today() };
+  saveTripState();
+  startWatch();
+  showTripUI("live");
+};
+
+function startWatch(){
+  reqWakeLock();
+  watchId = navigator.geolocation.watchPosition(onPos, err=>{
+    $("liveInfo").textContent = "GPS error: "+err.message+" (check Location permission)";
+  }, {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+}
+
+function onPos(p){
+  const {latitude:lat, longitude:lon, accuracy} = p.coords;
+  if(accuracy > 40){ $("liveInfo").textContent="GPS accuracy low ("+Math.round(accuracy)+" m)… keep phone with view of sky"; return; }
+  const pt={lat,lon,t:p.timestamp};
+  if(trip.last){
+    const d = haversine(trip.last, pt);
+    const dt = (pt.t - trip.last.t)/1000;
+    const speed = dt>0 ? d/dt : 0;
+    if(d >= 8 && speed < 55){ // ignore jitter and impossible jumps
+      trip.meters += d;
+      trip.last = pt;
+      saveTripState();
+    } else if(speed >= 55){
+      trip.last = pt; // resync after a GPS jump without counting it
+      saveTripState();
+    }
+  } else {
+    trip.last = pt; saveTripState();
+  }
+  const mi = trip.meters/MI;
+  $("liveMiles").innerHTML = mi.toFixed(1)+"<small> mi</small>";
+  const mins = Math.floor((Date.now()-trip.start)/60000);
+  $("liveInfo").textContent = "Tracking · "+mins+" min · GPS ±"+Math.round(accuracy)+" m";
+}
+
+$("tStop").onclick = () => {
+  if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  try{ wakeLock?.release(); }catch(e){} wakeLock=null;
+  const mi = trip.meters/MI;
+  $("fName").textContent = trip.name;
+  $("fGps").textContent = mi.toFixed(1)+" mi";
+  $("fMiles").value = mi.toFixed(1);
+  $("fEndOdo").value = (trip.startOdo + parseFloat(mi.toFixed(1))).toFixed(1);
+  showTripUI("finish");
+};
+
+$("fMiles").oninput = () => {
+  const m=parseFloat($("fMiles").value);
+  if(!isNaN(m)) $("fEndOdo").value=(trip.startOdo+m).toFixed(1);
+};
+$("fEndOdo").oninput = () => {
+  const e=parseFloat($("fEndOdo").value);
+  if(!isNaN(e)) $("fMiles").value=(e-trip.startOdo).toFixed(1);
+};
+
+$("fSave").onclick = async () => {
+  const miles=parseFloat($("fMiles").value), endOdo=parseFloat($("fEndOdo").value);
+  if(isNaN(miles)||miles<0){ toast("Check the miles value."); return; }
+  await dbPut("trips",{ date:trip.date, name:trip.name, desc:trip.desc,
+    startOdo:trip.startOdo, endOdo, miles, created:Date.now() });
+  localStorage.setItem("lastOdo", String(endOdo));
+  endTrip("Trip saved ✓");
+};
+$("fDiscard").onclick = () => { if(confirm("Discard this trip?")) endTrip("Trip discarded"); };
+
+function endTrip(msg){
+  trip=null; localStorage.removeItem("activeTrip");
+  $("tName").value=""; $("tDesc").value="";
+  $("tOdo").value = localStorage.getItem("lastOdo")||"";
+  showTripUI("setup");
+  toast(msg);
+  renderTrips();
+}
+
+function showTripUI(state){
+  $("tripSetup").style.display = state==="setup"?"":"none";
+  $("tripLive").style.display  = state==="live"?"":"none";
+  $("tripFinish").style.display= state==="finish"?"":"none";
+}
+
+async function renderTrips(){
+  const all=(await dbAll("trips")).sort((a,b)=> b.date.localeCompare(a.date) || b.created-a.created);
+  const list=$("tList");
+  $("tTotal").textContent = all.length ? all.length+" trips · "+all.reduce((s,t)=>s+t.miles,0).toFixed(1)+" mi" : "";
+  if(!all.length){ list.innerHTML='<div class="empty">No trips yet.</div>'; return; }
+  list.innerHTML="";
+  for(const t of all){
+    const div=document.createElement("div"); div.className="item";
+    div.innerHTML=`<div class="thumb">🚗</div><div class="info"><div class="t1">${esc(t.name)}</div>
+      <div class="t2">${t.date} · ${t.startOdo}→${t.endOdo}${t.desc?" · "+esc(t.desc):""}</div></div>
+      <div class="amt">${t.miles.toFixed(1)} mi</div>`;
+    div.onclick=()=>{
+      if(confirm(`Delete trip "${t.name}" (${t.miles.toFixed(1)} mi)?`))
+        dbDel("trips",t.id).then(renderTrips);
+    };
+    list.appendChild(div);
+  }
+}
+
+/* resume an interrupted trip after reload */
+function checkResume(){
+  const saved=localStorage.getItem("activeTrip");
+  if(!saved) return;
+  try{ trip=JSON.parse(saved); }catch(e){ localStorage.removeItem("activeTrip"); return; }
+  if(confirm(`Resume trip "${trip.name}"? (${(trip.meters/MI).toFixed(1)} mi recorded so far)`)){
+    trip.last=null; // avoid counting the gap
+    startWatch();
+    showTripUI("live");
+    $("liveMiles").innerHTML=(trip.meters/MI).toFixed(1)+"<small> mi</small>";
+    document.querySelector('nav button[data-tab="mileage"]').click();
+  } else {
+    trip=null; localStorage.removeItem("activeTrip");
+  }
+}
+
+/* ---------- Export ---------- */
+function inRange(dateStr){
+  const f=$("eFrom").value, t=$("eTo").value;
+  if(f && dateStr<f) return false;
+  if(t && dateStr>t) return false;
+  return true;
+}
+function rangeTag(){
+  const f=$("eFrom").value, t=$("eTo").value;
+  return (f||t) ? "_"+(f||"start")+"_to_"+(t||"today") : "";
+}
+
+async function shareFiles(files, kind){
+  try{
+    if(navigator.canShare && navigator.canShare({files})){
+      await navigator.share({files, title:"Ministry "+kind+" export"});
+      return;
+    }
+  }catch(e){ if(e.name==="AbortError") return; }
+  // fallback: download
+  for(const f of files){
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(f); a.download=f.name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 30000);
+  }
+}
+
+function wbToFile(wb, name){
+  const out = XLSX.write(wb, {bookType:"xlsx", type:"array"});
+  return new File([out], name, {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+
+$("eMileage").onclick = async () => {
+  if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
+  const trips=(await dbAll("trips")).filter(t=>inRange(t.date)).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!trips.length){ toast("No trips in that date range."); return; }
+  const rows=[["Date","Trip Name","Description","Start Odometer","End Odometer","Total Miles"]];
+  trips.forEach(t=>rows.push([t.date,t.name,t.desc,t.startOdo,t.endOdo,t.miles]));
+  rows.push([]);
+  rows.push(["","","","","TOTAL", trips.reduce((s,t)=>s+t.miles,0)]);
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:11},{wch:28},{wch:32},{wch:14},{wch:14},{wch:11}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Mileage Log");
+  shareFiles([wbToFile(wb,"mileage_log"+rangeTag()+".xlsx")],"mileage");
+};
+
+$("eReceipts").onclick = async () => {
+  if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
+  const rec=(await dbAll("receipts")).filter(r=>inRange(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!rec.length){ toast("No receipts in that date range."); return; }
+  const rows=[["Date","Vendor","Category","Description / Purpose","Amount","Photo Filename"]];
+  rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.desc,r.amount,r.img?receiptFile(r).name:""]));
+  rows.push([]);
+  rows.push(["","","","TOTAL", rec.reduce((s,r)=>s+r.amount,0),""]);
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:11},{wch:22},{wch:20},{wch:34},{wch:10},{wch:38}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Receipts");
+  shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
+};
+
+$("ePhotos").onclick = async () => {
+  const rec=(await dbAll("receipts")).filter(r=>r.img && inRange(r.date));
+  if(!rec.length){ toast("No receipt photos in that date range."); return; }
+  shareFiles(rec.map(receiptFile),"receipt photos");
+};
+
+/* ---------- init ---------- */
+openDB().then(()=>{
+  $("tOdo").value = localStorage.getItem("lastOdo")||"";
+  renderReceipts();
+  renderTrips();
+  checkResume();
+}).catch(e=>toast("Storage error: "+e.message,6000));
+</script>
+</body>
+</html>
