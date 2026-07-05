@@ -98,7 +98,7 @@
     <input type="file" id="rPhoto" accept="image/*">
     <div class="row">
       <div><label>Date</label><input type="date" id="rDate"></div>
-      <div><label>Amount ($)</label><input type="number" id="rAmount" inputmode="decimal" step="0.01" min="0" placeholder="0.00"></div>
+      <div><label>Amount ($)</label><input type="text" id="rAmount" inputmode="numeric" placeholder="0.00"></div>
     </div>
     <label>Category</label>
     <select id="rCategory">
@@ -112,6 +112,7 @@
     <textarea id="rDesc" placeholder="What was it for?"></textarea>
     <div id="rLocFields"></div>
     <button class="btn" id="rSave">Save Receipt</button>
+    <button class="btn gray small" id="rCancelEdit" style="display:none">Cancel Edit</button>
   </div>
   <div class="card">
     <h2>Saved Receipts</h2>
@@ -305,6 +306,7 @@ function makeLocFields(containerId){
       }
       if(city) cityEl.value = city;
     },
+    clear(){ country.value=""; buildState(""); cityEl.value=""; },
     gpsBtn: c.querySelector(".lf-gps")
   };
   api.gpsBtn.onclick = () => gpsFill(api);
@@ -347,6 +349,42 @@ function prefillLastLoc(){
 /* ---------- Receipts ---------- */
 $("rDate").value = today();
 
+/* cash-register amount entry: digits only, decimal baked in (2300 -> 23.00) */
+$("rAmount").addEventListener("input", e => {
+  const digits = e.target.value.replace(/\D/g,"").replace(/^0+/,"").slice(0,9);
+  e.target.value = digits ? (parseInt(digits,10)/100).toFixed(2) : "";
+});
+
+/* editing an existing receipt */
+let editingReceipt = null;
+function startEdit(r){
+  editingReceipt = r;
+  $("rDate").value = r.date;
+  $("rAmount").value = r.amount.toFixed(2);
+  $("rCategory").value = r.category;
+  $("rVendor").value = r.vendor||"";
+  $("rDesc").value = r.desc||"";
+  rLoc.clear();
+  rLoc.set({countryName:r.country, stateName:r.state, city:r.city});
+  $("rSave").textContent = "Update Receipt";
+  $("rCancelEdit").style.display = "";
+  closeModal();
+  document.querySelector('nav button[data-tab="receipts"]').click();
+  window.scrollTo({top:0, behavior:"smooth"});
+  toast("Editing — change any field, then tap Update. Choosing a new photo replaces the old one.", 4000);
+}
+function stopEditing(){
+  editingReceipt = null;
+  $("rSave").textContent = "Save Receipt";
+  $("rCancelEdit").style.display = "none";
+}
+$("rCancelEdit").onclick = () => {
+  stopEditing();
+  $("rPhoto").value=""; $("rAmount").value=""; $("rVendor").value=""; $("rDesc").value="";
+  $("rDate").value = today();
+  toast("Edit cancelled");
+};
+
 function compressImage(file, maxDim=1600, quality=0.8){
   return new Promise((res,rej)=>{
     const url = URL.createObjectURL(file);
@@ -370,20 +408,23 @@ $("rSave").onclick = async () => {
   if(isNaN(amount) || amount<=0){ toast("Please enter the amount."); return; }
   $("rSave").disabled = true;
   try{
-    let img = null;
+    let img = editingReceipt ? editingReceipt.img : null;
     const f = $("rPhoto").files[0];
     if(f) img = await compressImage(f).catch(()=>f);
     const loc = rLoc.get();
-    await dbPut("receipts",{
+    const rec = {
       date:$("rDate").value, amount, category:$("rCategory").value,
       vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
       country:loc.country, state:loc.state, city:loc.city,
-      img, created:Date.now()
-    });
+      img, created: editingReceipt ? editingReceipt.created : Date.now()
+    };
+    if(editingReceipt) rec.id = editingReceipt.id;
+    await dbPut("receipts", rec);
     saveLastLoc(loc);
+    toast(editingReceipt ? "Receipt updated ✓" : "Receipt saved ✓");
+    stopEditing();
     $("rPhoto").value=""; $("rAmount").value=""; $("rVendor").value=""; $("rDesc").value="";
     $("rDate").value=today();
-    toast("Receipt saved ✓");
     renderReceipts();
   }catch(err){ toast("Error: "+err.message); }
   $("rSave").disabled = false;
@@ -420,11 +461,13 @@ function showReceipt(r){
      <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
      <div class="kv"><span>Location</span><span style="text-align:right">${esc([r.city,r.state,r.country].filter(Boolean).join(", "))||"—"}</span></div>
      <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>`+
-    (r.img?'<button class="btn" id="mShare">Share Photo</button>':"")+
+    '<button class="btn" id="mEdit">Edit Receipt</button>'+
+    (r.img?'<button class="btn gray" id="mShare">Share Photo</button>':"")+
     '<button class="btn red small" id="mDel">Delete Receipt</button>'+
     '<button class="btn gray small" id="mClose">Close</button>';
   $("modal").classList.add("open");
   $("mClose").onclick=closeModal;
+  $("mEdit").onclick=()=>startEdit(r);
   $("mDel").onclick=async()=>{
     if(confirm("Delete this receipt?")){ await dbDel("receipts",r.id); closeModal(); renderReceipts(); }
   };
