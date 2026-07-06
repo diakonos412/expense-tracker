@@ -66,8 +66,9 @@
   .pulse{display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--red);
     margin-right:6px; animation:pu 1.2s infinite;}
   @keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
-  .chk{display:flex; align-items:center; gap:9px; font-size:14px; color:var(--ink); margin:2px 0;}
-  .chk input{width:auto; transform:scale(1.35); accent-color:var(--green);}
+  .chk{display:flex; align-items:center; gap:9px; font-size:14px; color:var(--ink); margin:2px 0; cursor:pointer;}
+  .chk input{appearance:auto; -webkit-appearance:checkbox; width:22px; height:22px; flex:none;
+    padding:0; margin:0; accent-color:var(--green);}
   .flag{flex:none; font-size:15px; margin-left:2px;}
   /* clearable fields */
   .clearwrap{position:relative;}
@@ -242,6 +243,13 @@ function dbDel(store,id){
     const rq = db.transaction(store,"readwrite").objectStore(store).delete(id);
     rq.onsuccess=()=>res(); rq.onerror=()=>rej(rq.error);
   });
+}
+/* Safari quirk: re-saving a blob that was read from IndexedDB corrupts the
+   in-session copy. Always re-save a fresh byte-copy of the image instead. */
+async function cloneImg(b){
+  if(!b) return b;
+  try{ return new Blob([await b.arrayBuffer()], {type:b.type||"image/jpeg"}); }
+  catch(e){ return b; }
 }
 
 /* ---------- Tabs ---------- */
@@ -440,7 +448,7 @@ $("rSave").onclick = async () => {
   if(isNaN(amount) || amount<=0){ toast("Please enter the amount."); return; }
   $("rSave").disabled = true;
   try{
-    let img = editingReceipt ? editingReceipt.img : null;
+    let img = editingReceipt ? await cloneImg(editingReceipt.img) : null;
     const f = $("rPhoto").files[0];
     if(f) img = await compressImage(f).catch(()=>f);
     const loc = rLoc.get();
@@ -504,7 +512,7 @@ function showReceipt(r){
   $("mClose").onclick=closeModal;
   $("mEdit").onclick=()=>startEdit(r);
   $("mFlag").onclick=async()=>{
-    r.exported=!r.exported; await dbPut("receipts",r);
+    r.exported=!r.exported; r.img=await cloneImg(r.img); await dbPut("receipts",r);
     closeModal(); renderReceipts();
     toast(r.exported?"Marked as exported ✔":"Marked as NOT exported ✘");
   };
@@ -803,7 +811,7 @@ $("eReceipts").onclick = async () => {
   XLSX.utils.book_append_sheet(wb,ws,"Receipts");
   const ok = await shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
   if(ok){
-    for(const r of rec){ r.exported=true; await dbPut("receipts",r); }
+    for(const r of rec){ r.exported=true; r.img=await cloneImg(r.img); await dbPut("receipts",r); }
     renderReceipts();
     toast(rec.length+" receipt"+(rec.length>1?"s":"")+" marked as exported ✔");
   }
