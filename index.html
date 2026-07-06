@@ -66,6 +66,9 @@
   .pulse{display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--red);
     margin-right:6px; animation:pu 1.2s infinite;}
   @keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
+  .chk{display:flex; align-items:center; gap:9px; font-size:14px; color:var(--ink); margin:2px 0;}
+  .chk input{width:auto; transform:scale(1.35); accent-color:var(--green);}
+  .flag{flex:none; font-size:15px; margin-left:2px;}
   /* clearable fields */
   .clearwrap{position:relative;}
   .clearwrap input,.clearwrap select{padding-right:40px;}
@@ -130,6 +133,8 @@
     <div id="tLocFields"></div>
     <label>Start odometer</label>
     <input type="number" id="tOdo" inputmode="decimal" step="0.1" min="0" placeholder="e.g., 48213">
+    <label>Mileage rate (¢ per mile)</label>
+    <input type="number" id="tRate" inputmode="decimal" step="0.1" min="0" value="72.5">
     <button class="btn" id="tStart">▶ Start Trip</button>
     <div class="empty" style="padding-top:10px">GPS tracks your route and calculates the end odometer for you. Keep this app open while driving.</div>
   </div>
@@ -170,10 +175,12 @@
   </div>
   <div class="card">
     <h2>Mileage</h2>
+    <label class="chk"><input type="checkbox" id="eNewM" checked> Only new trips (not yet exported)</label>
     <button class="btn" id="eMileage">Export Mileage Log (Excel)</button>
   </div>
   <div class="card">
     <h2>Receipts</h2>
+    <label class="chk"><input type="checkbox" id="eNewR" checked> Only new receipts (not yet exported)</label>
     <button class="btn" id="eReceipts">Export Receipt List (Excel)</button>
     <button class="btn gray" id="ePhotos">Share Receipt Photos…</button>
     <div class="empty" style="padding-top:10px">Use the share sheet to save exports to iCloud Drive (Files) or email them for reimbursement.</div>
@@ -196,6 +203,7 @@ const $ = id => document.getElementById(id);
 const fmt$ = n => "$" + Number(n).toFixed(2);
 const today = () => new Date().toISOString().slice(0,10);
 const esc = s => String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const flagIcon = x => x ? '<span class="flag" style="color:var(--green)">✔</span>' : '<span class="flag" style="color:var(--red);font-weight:700">✘</span>';
 
 function toast(t, ms=2600){
   document.querySelectorAll(".msg").forEach(e=>e.remove());
@@ -440,7 +448,8 @@ $("rSave").onclick = async () => {
       date:$("rDate").value, amount, category:$("rCategory").value, subcat:$("rSubcat").value,
       vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
       country:loc.country, state:loc.state, city:loc.city,
-      img, created: editingReceipt ? editingReceipt.created : Date.now()
+      img, created: editingReceipt ? editingReceipt.created : Date.now(),
+      exported: editingReceipt ? !!editingReceipt.exported : false
     };
     if(editingReceipt) rec.id = editingReceipt.id;
     await dbPut("receipts", rec);
@@ -468,7 +477,7 @@ async function renderReceipts(){
     if(r.img){ const u=URL.createObjectURL(r.img); objUrls.push(u); thumb=`<img class="thumb" src="${u}">`; }
     div.innerHTML = thumb+`<div class="info"><div class="t1">${esc(r.vendor)||esc(r.category)}</div>
       <div class="t2">${r.date} · ${esc(r.category)}${r.city?" · "+esc(r.city):""}${r.desc?" · "+esc(r.desc):""}</div></div>
-      <div class="amt">${fmt$(r.amount)}</div>`;
+      ${flagIcon(r.exported)}<div class="amt">${fmt$(r.amount)}</div>`;
     div.onclick=()=>showReceipt(r);
     list.appendChild(div);
   }
@@ -484,14 +493,21 @@ function showReceipt(r){
      <div class="kv"><span>Category</span><span style="text-align:right">${esc(expCat(r))}</span></div>
      <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
      <div class="kv"><span>Location</span><span style="text-align:right">${esc([r.city,r.state,r.country].filter(Boolean).join(", "))||"—"}</span></div>
-     <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>`+
+     <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>
+     <div class="kv"><span>Exported</span><span>${r.exported?"YES ✔":"NO ✘"}</span></div>`+
     '<button class="btn" id="mEdit">Edit Receipt</button>'+
+    '<button class="btn gray small" id="mFlag">'+(r.exported?"Mark as NOT Exported":"Mark as Exported")+'</button>'+
     (r.img?'<button class="btn gray" id="mShare">Share Photo</button>':"")+
     '<button class="btn red small" id="mDel">Delete Receipt</button>'+
     '<button class="btn gray small" id="mClose">Close</button>';
   $("modal").classList.add("open");
   $("mClose").onclick=closeModal;
   $("mEdit").onclick=()=>startEdit(r);
+  $("mFlag").onclick=async()=>{
+    r.exported=!r.exported; await dbPut("receipts",r);
+    closeModal(); renderReceipts();
+    toast(r.exported?"Marked as exported ✔":"Marked as NOT exported ✘");
+  };
   $("mDel").onclick=async()=>{
     if(confirm("Delete this receipt?")){ await dbDel("receipts",r.id); closeModal(); renderReceipts(); }
   };
@@ -532,10 +548,13 @@ $("tStart").onclick = () => {
   if(isNaN(odo)){ toast("Please enter the start odometer."); return; }
   if(!navigator.geolocation){ toast("GPS not available on this device."); return; }
   const loc = tLoc.get();
+  const rateV = parseFloat($("tRate").value);
   trip = { name, desc:$("tDesc").value.trim(), startOdo:odo, meters:0,
+           rate: isNaN(rateV) ? 72.5 : rateV,
            country:loc.country, state:loc.state, city:loc.city,
            last:null, start:Date.now(), date:today() };
   saveLastLoc(loc);
+  localStorage.setItem("lastRate", String(trip.rate));
   saveTripState();
   startWatch();
   showTripUI("live");
@@ -598,7 +617,8 @@ $("fSave").onclick = async () => {
   if(isNaN(miles)||miles<0){ toast("Check the miles value."); return; }
   await dbPut("trips",{ date:trip.date, name:trip.name, desc:trip.desc,
     country:trip.country||"", state:trip.state||"", city:trip.city||"",
-    startOdo:trip.startOdo, endOdo, miles, created:Date.now() });
+    startOdo:trip.startOdo, endOdo, miles, rate:trip.rate??72.5,
+    exported:false, created:Date.now() });
   localStorage.setItem("lastOdo", String(endOdo));
   endTrip("Trip saved ✓");
 };
@@ -629,13 +649,72 @@ async function renderTrips(){
     const div=document.createElement("div"); div.className="item";
     div.innerHTML=`<div class="thumb">🚗</div><div class="info"><div class="t1">${esc(t.name)}</div>
       <div class="t2">${t.date} · ${t.startOdo}→${t.endOdo}${t.city?" · "+esc(t.city):""}${t.desc?" · "+esc(t.desc):""}</div></div>
-      <div class="amt">${t.miles.toFixed(1)} mi</div>`;
-    div.onclick=()=>{
-      if(confirm(`Delete trip "${t.name}" (${t.miles.toFixed(1)} mi)?`))
-        dbDel("trips",t.id).then(renderTrips);
-    };
+      ${flagIcon(t.exported)}<div class="amt">${t.miles.toFixed(1)} mi</div>`;
+    div.onclick=()=>showTrip(t);
     list.appendChild(div);
   }
+}
+
+function tripAmount(t){ return Math.round(t.miles*(t.rate??72.5))/100; }
+
+function showTrip(t){
+  const box=$("modalBox");
+  box.innerHTML =
+    `<div class="kv"><span>Date</span><span>${t.date}</span></div>
+     <div class="kv"><span>Trip</span><span style="text-align:right">${esc(t.name)}</span></div>
+     <div class="kv"><span>Description</span><span style="text-align:right">${esc(t.desc)||"—"}</span></div>
+     <div class="kv"><span>Location</span><span style="text-align:right">${esc([t.city,t.state,t.country].filter(Boolean).join(", "))||"—"}</span></div>
+     <div class="kv"><span>Odometer</span><span>${t.startOdo} → ${t.endOdo}</span></div>
+     <div class="kv"><span>Total miles</span><span>${t.miles.toFixed(1)} mi</span></div>
+     <div class="kv"><span>Rate</span><span>${t.rate??72.5}¢ / mile</span></div>
+     <div class="kv"><span>Amount</span><span>${fmt$(tripAmount(t))}</span></div>
+     <div class="kv"><span>Exported</span><span>${t.exported?"YES ✔":"NO ✘"}</span></div>`+
+    '<button class="btn" id="mtEdit">Edit Trip</button>'+
+    '<button class="btn gray small" id="mtFlag">'+(t.exported?"Mark as NOT Exported":"Mark as Exported")+'</button>'+
+    '<button class="btn red small" id="mtDel">Delete Trip</button>'+
+    '<button class="btn gray small" id="mtClose">Close</button>';
+  $("modal").classList.add("open");
+  $("mtClose").onclick=closeModal;
+  $("mtEdit").onclick=()=>editTrip(t);
+  $("mtFlag").onclick=async()=>{
+    t.exported=!t.exported; await dbPut("trips",t);
+    closeModal(); renderTrips();
+    toast(t.exported?"Marked as exported ✔":"Marked as NOT exported ✘");
+  };
+  $("mtDel").onclick=()=>{
+    if(confirm(`Delete trip "${t.name}" (${t.miles.toFixed(1)} mi)?`))
+      dbDel("trips",t.id).then(()=>{ closeModal(); renderTrips(); });
+  };
+}
+
+function editTrip(t){
+  const box=$("modalBox");
+  box.innerHTML =
+    `<h2>Edit Trip</h2>
+     <label>Date</label><input type="date" id="etDate" value="${t.date}">
+     <label>Trip name</label><input type="text" id="etName" value="${esc(t.name)}">
+     <label>Description</label><input type="text" id="etDesc" value="${esc(t.desc||"")}">
+     <div class="row">
+       <div><label>Start odometer</label><input type="number" id="etStart" inputmode="decimal" step="0.1" value="${t.startOdo}"></div>
+       <div><label>End odometer</label><input type="number" id="etEnd" inputmode="decimal" step="0.1" value="${t.endOdo}"></div>
+     </div>
+     <label>Mileage rate (¢ per mile)</label>
+     <input type="number" id="etRate" inputmode="decimal" step="0.1" value="${t.rate??72.5}">`+
+    '<button class="btn" id="etSave">Save Changes</button>'+
+    '<button class="btn gray small" id="etCancel">Cancel</button>';
+  $("etCancel").onclick=()=>showTrip(t);
+  $("etSave").onclick=async()=>{
+    const s=parseFloat($("etStart").value), e=parseFloat($("etEnd").value), rate=parseFloat($("etRate").value);
+    if(!$("etDate").value){ toast("Please enter a date."); return; }
+    if(!$("etName").value.trim()){ toast("Please enter a trip name."); return; }
+    if(isNaN(s)||isNaN(e)||e<s){ toast("Check the odometer values."); return; }
+    t.date=$("etDate").value; t.name=$("etName").value.trim(); t.desc=$("etDesc").value.trim();
+    t.startOdo=s; t.endOdo=e; t.miles=Math.round((e-s)*10)/10;
+    t.rate=isNaN(rate)?72.5:rate;
+    await dbPut("trips",t);
+    closeModal(); renderTrips();
+    toast("Trip updated ✓");
+  };
 }
 
 /* resume an interrupted trip after reload */
@@ -670,9 +749,9 @@ async function shareFiles(files, kind){
   try{
     if(navigator.canShare && navigator.canShare({files})){
       await navigator.share({files, title:"Ministry "+kind+" export"});
-      return;
+      return true;
     }
-  }catch(e){ if(e.name==="AbortError") return; }
+  }catch(e){ if(e.name==="AbortError") return false; }
   // fallback: download
   for(const f of files){
     const a=document.createElement("a");
@@ -680,6 +759,7 @@ async function shareFiles(files, kind){
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(a.href), 30000);
   }
+  return true;
 }
 
 function wbToFile(wb, name){
@@ -689,23 +769,30 @@ function wbToFile(wb, name){
 
 $("eMileage").onclick = async () => {
   if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
-  const trips=(await dbAll("trips")).filter(t=>inRange(t.date)).sort((a,b)=>a.date.localeCompare(b.date));
-  if(!trips.length){ toast("No trips in that date range."); return; }
-  const rows=[["Date","Trip Name","Description","City","State/Province","Country","Start Odometer","End Odometer","Total Miles"]];
-  trips.forEach(t=>rows.push([t.date,t.name,t.desc,t.city||"",t.state||"",t.country||"",t.startOdo,t.endOdo,t.miles]));
+  const newOnly=$("eNewM").checked;
+  const trips=(await dbAll("trips")).filter(t=>inRange(t.date)&&(!newOnly||!t.exported)).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!trips.length){ toast(newOnly?"No new (unexported) trips in that range.":"No trips in that date range."); return; }
+  const rows=[["Date","Trip Name","Description","City","State/Province","Country","Start Odometer","End Odometer","Total Miles","Rate (¢/mile)","Amount ($)"]];
+  trips.forEach(t=>rows.push([t.date,t.name,t.desc,t.city||"",t.state||"",t.country||"",t.startOdo,t.endOdo,t.miles,t.rate??72.5,tripAmount(t)]));
   rows.push([]);
-  rows.push(["","","","","","","","TOTAL", trips.reduce((s,t)=>s+t.miles,0)]);
+  rows.push(["","","","","","","","TOTAL", trips.reduce((s,t)=>s+t.miles,0), "", Math.round(trips.reduce((s,t)=>s+t.miles*(t.rate??72.5),0))/100]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"]=[{wch:11},{wch:26},{wch:30},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:11}];
+  ws["!cols"]=[{wch:11},{wch:26},{wch:30},{wch:16},{wch:16},{wch:16},{wch:14},{wch:14},{wch:11},{wch:12},{wch:11}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Mileage Log");
-  shareFiles([wbToFile(wb,"mileage_log"+rangeTag()+".xlsx")],"mileage");
+  const ok = await shareFiles([wbToFile(wb,"mileage_log"+rangeTag()+".xlsx")],"mileage");
+  if(ok){
+    for(const t of trips){ t.exported=true; await dbPut("trips",t); }
+    renderTrips();
+    toast(trips.length+" trip"+(trips.length>1?"s":"")+" marked as exported ✔");
+  }
 };
 
 $("eReceipts").onclick = async () => {
   if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
-  const rec=(await dbAll("receipts")).filter(r=>inRange(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
-  if(!rec.length){ toast("No receipts in that date range."); return; }
+  const newOnly=$("eNewR").checked;
+  const rec=(await dbAll("receipts")).filter(r=>inRange(r.date)&&(!newOnly||!r.exported)).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!rec.length){ toast(newOnly?"No new (unexported) receipts in that range.":"No receipts in that date range."); return; }
   const rows=[["Date","Vendor","Category","Sub-Category","Expense Category","Description / Purpose","City","State/Province","Country","Amount","Photo Filename"]];
   rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.subcat||"",expCat(r),r.desc,r.city||"",r.state||"",r.country||"",r.amount,r.img?receiptFile(r).name:""]));
   rows.push([]);
@@ -714,7 +801,12 @@ $("eReceipts").onclick = async () => {
   ws["!cols"]=[{wch:11},{wch:22},{wch:24},{wch:28},{wch:44},{wch:30},{wch:16},{wch:16},{wch:16},{wch:10},{wch:38}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Receipts");
-  shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
+  const ok = await shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
+  if(ok){
+    for(const r of rec){ r.exported=true; await dbPut("receipts",r); }
+    renderReceipts();
+    toast(rec.length+" receipt"+(rec.length>1?"s":"")+" marked as exported ✔");
+  }
 };
 
 $("ePhotos").onclick = async () => {
@@ -726,6 +818,7 @@ $("ePhotos").onclick = async () => {
 /* ---------- init ---------- */
 openDB().then(()=>{
   $("tOdo").value = localStorage.getItem("lastOdo")||"";
+  $("tRate").value = localStorage.getItem("lastRate")||"72.5";
   prefillLastLoc();
   renderReceipts();
   renderTrips();
