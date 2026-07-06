@@ -101,11 +101,9 @@
       <div><label>Amount ($)</label><input type="text" id="rAmount" inputmode="numeric" placeholder="0.00"></div>
     </div>
     <label>Category</label>
-    <select id="rCategory">
-      <option>Ministry Supplies</option><option>Travel / Transportation</option>
-      <option>Meals</option><option>Lodging</option><option>Office</option>
-      <option>Postage / Shipping</option><option>Books / Media</option><option>Other</option>
-    </select>
+    <select id="rCategory"></select>
+    <label>Sub-category</label>
+    <select id="rSubcat"></select>
     <label>Vendor / merchant</label>
     <input type="text" id="rVendor" placeholder="e.g., Office Depot">
     <label>Description / ministry purpose</label>
@@ -349,6 +347,30 @@ function prefillLastLoc(){
 /* ---------- Receipts ---------- */
 $("rDate").value = today();
 
+/* categories and sub-categories */
+const CATS = {
+  "Travel": ["Travel-Air","Travel-Auto Rental","Travel-Entertainment","Travel-Lodging","Travel-Meals","Travel-Mileage","Travel-Parking & Tolls","Travel-Per Diem","Travel-Public Transit","Travel-Insurance","Travel-Other","Auto Fuel","Auto Repair and Maintenance","Other Auto Expense"],
+  "Office and Related": ["Equipment Rental","Furniture and Fixtures Expense","Lawn & Garden","Maintenance & Repair","Office Supplies","Other Supplies","Rent","Utilities","Other Home or Office Expense","Entertainment","Food & Beverage","Licenses & Fees","Dues & Subscriptions","Postage & Shipping","Penalties & Fines"],
+  "Information Technology": ["Computer & Related Equipment Expense","Email Service","Internet","Software Expense","Telephone & Wireless","Web Hosting","Website Development & Maintenance","Research & Development","IT Consulting","IT Managed Service","Other IT Expense"],
+  "Insurance": ["Auto Insurance","General Liability Insurance","Property Insurance","Worker Compensation Insurance","Other Insurance Expense"],
+  "Professional": ["Security","Accounting & Tax","Consulting","Translation Services","Contractor Services","Legal","Medical","Other Professional & Services"],
+  "Conference and Promotional": ["Advertising","Marketing","Conferences, Conventions & Meetings","Printing & Production","Media & Content Creation","Other Promotional Expense"],
+  "Benevolence": ["Cash Donations","NonCash Donations","Recognition & Gifts","Scholarship"],
+  "Taxes": ["Federal Income Taxes","International Income Taxes","International VAT","Other International Taxes","Sales & Use Taxes","State & Local Franchise Taxes","State & Local Income Taxes","State & Local Property Taxes","Other Taxes"],
+  "Training and Development": ["Education","Training & Development"],
+  "Bank Fees and Interest": ["Bank Fees","Interest Expense","Other Loan Costs"],
+  "Other Expenses": ["Other Expenses"]
+};
+Object.keys(CATS).forEach(c => $("rCategory").appendChild(new Option(c,c)));
+function buildSubcats(){
+  const s = $("rSubcat");
+  s.innerHTML = "";
+  (CATS[$("rCategory").value]||[]).forEach(x => s.appendChild(new Option(x,x)));
+}
+$("rCategory").onchange = buildSubcats;
+buildSubcats();
+const expCat = r => r.subcat ? r.category+" | "+r.subcat : (r.category||"");
+
 /* cash-register amount entry: digits only, decimal baked in (2300 -> 23.00) */
 $("rAmount").addEventListener("input", e => {
   const digits = e.target.value.replace(/\D/g,"").replace(/^0+/,"").slice(0,9);
@@ -361,7 +383,9 @@ function startEdit(r){
   editingReceipt = r;
   $("rDate").value = r.date;
   $("rAmount").value = r.amount.toFixed(2);
-  $("rCategory").value = r.category;
+  if(CATS[r.category]) $("rCategory").value = r.category;
+  buildSubcats();
+  if(r.subcat) $("rSubcat").value = r.subcat;
   $("rVendor").value = r.vendor||"";
   $("rDesc").value = r.desc||"";
   rLoc.clear();
@@ -413,7 +437,7 @@ $("rSave").onclick = async () => {
     if(f) img = await compressImage(f).catch(()=>f);
     const loc = rLoc.get();
     const rec = {
-      date:$("rDate").value, amount, category:$("rCategory").value,
+      date:$("rDate").value, amount, category:$("rCategory").value, subcat:$("rSubcat").value,
       vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
       country:loc.country, state:loc.state, city:loc.city,
       img, created: editingReceipt ? editingReceipt.created : Date.now()
@@ -457,7 +481,7 @@ function showReceipt(r){
   box.innerHTML = imgHtml+
     `<div class="kv"><span>Date</span><span>${r.date}</span></div>
      <div class="kv"><span>Amount</span><span>${fmt$(r.amount)}</span></div>
-     <div class="kv"><span>Category</span><span>${esc(r.category)}</span></div>
+     <div class="kv"><span>Category</span><span style="text-align:right">${esc(expCat(r))}</span></div>
      <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
      <div class="kv"><span>Location</span><span style="text-align:right">${esc([r.city,r.state,r.country].filter(Boolean).join(", "))||"—"}</span></div>
      <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>`+
@@ -682,12 +706,12 @@ $("eReceipts").onclick = async () => {
   if(typeof XLSX==="undefined"){ toast("Excel library not loaded — check internet connection."); return; }
   const rec=(await dbAll("receipts")).filter(r=>inRange(r.date)).sort((a,b)=>a.date.localeCompare(b.date));
   if(!rec.length){ toast("No receipts in that date range."); return; }
-  const rows=[["Date","Vendor","Category","Description / Purpose","City","State/Province","Country","Amount","Photo Filename"]];
-  rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.desc,r.city||"",r.state||"",r.country||"",r.amount,r.img?receiptFile(r).name:""]));
+  const rows=[["Date","Vendor","Category","Sub-Category","Expense Category","Description / Purpose","City","State/Province","Country","Amount","Photo Filename"]];
+  rec.forEach(r=>rows.push([r.date,r.vendor,r.category,r.subcat||"",expCat(r),r.desc,r.city||"",r.state||"",r.country||"",r.amount,r.img?receiptFile(r).name:""]));
   rows.push([]);
-  rows.push(["","","","","","","TOTAL", rec.reduce((s,r)=>s+r.amount,0),""]);
+  rows.push(["","","","","","","","","TOTAL", rec.reduce((s,r)=>s+r.amount,0),""]);
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws["!cols"]=[{wch:11},{wch:22},{wch:20},{wch:30},{wch:16},{wch:16},{wch:16},{wch:10},{wch:38}];
+  ws["!cols"]=[{wch:11},{wch:22},{wch:24},{wch:28},{wch:44},{wch:30},{wch:16},{wch:16},{wch:16},{wch:10},{wch:38}];
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,ws,"Receipts");
   shareFiles([wbToFile(wb,"receipts"+rangeTag()+".xlsx")],"receipts");
