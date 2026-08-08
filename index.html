@@ -200,7 +200,19 @@
 <script src="geo.js"></script>
 <script>
 "use strict";
+const APP_VERSION = "2026-08-07.1";
 const $ = id => document.getElementById(id);
+
+/* auto-update: iOS home-screen apps cache hard; check for a newer version on launch */
+(async()=>{
+  try{
+    if(localStorage.getItem("activeTrip")) return;          // never interrupt a trip
+    if(location.search.startsWith("?v=")) { history.replaceState(null,"",location.pathname); return; }
+    const txt = await (await fetch(location.pathname, {cache:"no-store"})).text();
+    const m = txt.match(/APP_VERSION = "([^"]+)"/);
+    if(m && m[1] !== APP_VERSION) location.replace(location.pathname + "?v=" + Date.now());
+  }catch(e){} // offline etc. — just run the cached version
+})();
 const fmt$ = n => "$" + Number(n).toFixed(2);
 const today = () => new Date().toISOString().slice(0,10);
 const esc = s => String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
