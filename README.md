@@ -23,7 +23,7 @@ Tap any saved receipt to view it, **Edit** it, share the photo, mark it exported
 ## Mileage
 
 1. On the **Mileage** tab, name the trip and enter your **start odometer** (pre-filled from your last trip)
-2. Check the mileage rate (defaults to 72.5¢/mile) and tap **▶ Start Trip**
+2. Check the mileage rate (defaults to 76¢/mile) and tap **▶ Start Trip**
 3. Drive. **Keep the app open on screen** — a dash mount and charger work well. The screen stays awake automatically
 4. On arrival tap **■ Stop Trip** — GPS distance and end odometer are calculated; adjust if needed, then **Save**
 

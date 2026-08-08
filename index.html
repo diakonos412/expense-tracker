@@ -135,7 +135,7 @@
     <label>Start odometer</label>
     <input type="number" id="tOdo" inputmode="decimal" step="0.1" min="0" placeholder="e.g., 48213">
     <label>Mileage rate (¢ per mile)</label>
-    <input type="number" id="tRate" inputmode="decimal" step="0.1" min="0" value="72.5">
+    <input type="number" id="tRate" inputmode="decimal" step="0.1" min="0" value="76">
     <button class="btn" id="tStart">▶ Start Trip</button>
     <div class="empty" style="padding-top:10px">GPS tracks your route and calculates the end odometer for you. Keep this app open while driving.</div>
   </div>
@@ -558,7 +558,7 @@ $("tStart").onclick = () => {
   const loc = tLoc.get();
   const rateV = parseFloat($("tRate").value);
   trip = { name, desc:$("tDesc").value.trim(), startOdo:odo, meters:0,
-           rate: isNaN(rateV) ? 72.5 : rateV,
+           rate: isNaN(rateV) ? 76 : rateV,
            country:loc.country, state:loc.state, city:loc.city,
            last:null, start:Date.now(), date:today() };
   saveLastLoc(loc);
@@ -718,7 +718,7 @@ function editTrip(t){
     if(isNaN(s)||isNaN(e)||e<s){ toast("Check the odometer values."); return; }
     t.date=$("etDate").value; t.name=$("etName").value.trim(); t.desc=$("etDesc").value.trim();
     t.startOdo=s; t.endOdo=e; t.miles=Math.round((e-s)*10)/10;
-    t.rate=isNaN(rate)?72.5:rate;
+    t.rate=isNaN(rate)?76:rate;
     await dbPut("trips",t);
     closeModal(); renderTrips();
     toast("Trip updated ✓");
@@ -826,7 +826,8 @@ $("ePhotos").onclick = async () => {
 /* ---------- init ---------- */
 openDB().then(()=>{
   $("tOdo").value = localStorage.getItem("lastOdo")||"";
-  $("tRate").value = localStorage.getItem("lastRate")||"72.5";
+  if(localStorage.getItem("lastRate")==="72.5") localStorage.setItem("lastRate","76"); // IRS rate change July 2026
+  $("tRate").value = localStorage.getItem("lastRate")||"76";
   prefillLastLoc();
   renderReceipts();
   renderTrips();
