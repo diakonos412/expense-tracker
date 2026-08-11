@@ -200,7 +200,7 @@
 <script src="geo.js"></script>
 <script>
 "use strict";
-const APP_VERSION = "2026-08-07.1";
+const APP_VERSION = "2026-08-11.1";
 const $ = id => document.getElementById(id);
 
 /* auto-update: iOS home-screen apps cache hard; check for a newer version on launch */
@@ -469,7 +469,8 @@ $("rSave").onclick = async () => {
       vendor:$("rVendor").value.trim(), desc:$("rDesc").value.trim(),
       country:loc.country, state:loc.state, city:loc.city,
       img, created: editingReceipt ? editingReceipt.created : Date.now(),
-      exported: editingReceipt ? !!editingReceipt.exported : false
+      exported: editingReceipt ? !!editingReceipt.exported : false,
+      photoExported: editingReceipt ? !!editingReceipt.photoExported : false
     };
     if(editingReceipt) rec.id = editingReceipt.id;
     await dbPut("receipts", rec);
@@ -497,7 +498,7 @@ async function renderReceipts(){
     if(r.img){ const u=URL.createObjectURL(r.img); objUrls.push(u); thumb=`<img class="thumb" src="${u}">`; }
     div.innerHTML = thumb+`<div class="info"><div class="t1">${esc(r.vendor)||esc(r.category)}</div>
       <div class="t2">${r.date} · ${esc(r.category)}${r.city?" · "+esc(r.city):""}${r.desc?" · "+esc(r.desc):""}</div></div>
-      ${flagIcon(r.exported)}<div class="amt">${fmt$(r.amount)}</div>`;
+      ${flagIcon(r.exported && (!r.img || r.photoExported))}<div class="amt">${fmt$(r.amount)}</div>`;
     div.onclick=()=>showReceipt(r);
     list.appendChild(div);
   }
@@ -514,7 +515,8 @@ function showReceipt(r){
      <div class="kv"><span>Vendor</span><span>${esc(r.vendor)||"—"}</span></div>
      <div class="kv"><span>Location</span><span style="text-align:right">${esc([r.city,r.state,r.country].filter(Boolean).join(", "))||"—"}</span></div>
      <div class="kv"><span>Purpose</span><span style="text-align:right">${esc(r.desc)||"—"}</span></div>
-     <div class="kv"><span>Exported</span><span>${r.exported?"YES ✔":"NO ✘"}</span></div>`+
+     <div class="kv"><span>Exported (Excel)</span><span>${r.exported?"YES ✔":"NO ✘"}</span></div>`+
+    (r.img?`<div class="kv"><span>Photo exported</span><span>${r.photoExported?"YES ✔":"NO ✘"}</span></div>`:"")+
     '<button class="btn" id="mEdit">Edit Receipt</button>'+
     '<button class="btn gray small" id="mFlag">'+(r.exported?"Mark as NOT Exported":"Mark as Exported")+'</button>'+
     (r.img?'<button class="btn gray" id="mShare">Share Photo</button>':"")+
@@ -524,7 +526,8 @@ function showReceipt(r){
   $("mClose").onclick=closeModal;
   $("mEdit").onclick=()=>startEdit(r);
   $("mFlag").onclick=async()=>{
-    r.exported=!r.exported; r.img=await cloneImg(r.img); await dbPut("receipts",r);
+    const v=!r.exported;
+    r.exported=v; r.photoExported=v; r.img=await cloneImg(r.img); await dbPut("receipts",r);
     closeModal(); renderReceipts();
     toast(r.exported?"Marked as exported ✔":"Marked as NOT exported ✘");
   };
@@ -830,9 +833,15 @@ $("eReceipts").onclick = async () => {
 };
 
 $("ePhotos").onclick = async () => {
-  const rec=(await dbAll("receipts")).filter(r=>r.img && inRange(r.date));
-  if(!rec.length){ toast("No receipt photos in that date range."); return; }
-  shareFiles(rec.map(receiptFile),"receipt photos");
+  const newOnly=$("eNewR").checked;
+  const rec=(await dbAll("receipts")).filter(r=>r.img && inRange(r.date) && (!newOnly||!r.photoExported));
+  if(!rec.length){ toast(newOnly?"No new (unexported) receipt photos in that range.":"No receipt photos in that date range."); return; }
+  const ok = await shareFiles(rec.map(receiptFile),"receipt photos");
+  if(ok){
+    for(const r of rec){ r.photoExported=true; r.img=await cloneImg(r.img); await dbPut("receipts",r); }
+    renderReceipts();
+    toast(rec.length+" photo"+(rec.length>1?"s":"")+" marked as exported ✔");
+  }
 };
 
 /* ---------- init ---------- */
